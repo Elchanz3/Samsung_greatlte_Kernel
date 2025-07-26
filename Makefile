@@ -252,8 +252,6 @@ SUBARCH := $(shell uname -m | sed -e s/i.86/x86/ -e s/x86_64/x86/ \
 # "make" in the configured kernel build directory always uses that.
 # Default value for CROSS_COMPILE is not to prefix executables
 # Note: Some architectures assign CROSS_COMPILE in their arch/*/Makefile
-#ARCH		?= $(SUBARCH)
-#CROSS_COMPILE	?= $(CONFIG_CROSS_COMPILE:"%"=%)
 ARCH            ?= arm64
 CROSS_COMPILE ?= ../gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/bin/aarch64-linux-gnu-
 
@@ -301,14 +299,19 @@ CONFIG_SHELL := $(shell if [ -x "$$BASH" ]; then echo $$BASH; \
 	  else if [ -x /bin/bash ]; then echo /bin/bash; \
 	  else echo sh; fi ; fi)
 
+OPT_LVL := -O3
+
 HOSTCC       = gcc
 HOSTCXX      = g++
-HOSTCFLAGS   := -Wall -Wmissing-prototypes -Wstrict-prototypes -Wno-format-overflow -O2 -fomit-frame-pointer -fno-strict-aliasing -std=gnu89
-HOSTCXXFLAGS = -O2 -fomit-frame-pointer -fno-strict-aliasing
-
-# Host specific Flags
-HOSTCFLAGS   += -march=core2 -mcpu=core2 -mtune=core2 -pipe
-HOSTCXXFLAGS += -march=core2 -mcpu=core2 -mtune=core2 -pipe
+HOSTCFLAGS   := -Wall -Wmissing-prototypes -Wstrict-prototypes \
+		-march=native -mcpu=native -mtune=native \
+		$(OPT_LVL) -fomit-frame-pointer -std=gnu89 \
+		-fno-strict-aliasing -Werror-implicit-function-declaration \
+		-Werror=incompatible-pointer-types -DNDEBUG -pipe \
+		-Wno-dangling-pointer
+HOSTCXXFLAGS := -march=native -mcpu=native -mtune=native \
+		$(OPT_LVL) -fomit-frame-pointer -fno-strict-aliasing \
+		-DNDEBUG -pipe
 
 ifeq ($(shell $(HOSTCC) -v 2>&1 | grep -c "clang version"), 1)
 HOSTCFLAGS  += -Wno-unused-value -Wno-unused-parameter \
@@ -408,35 +411,20 @@ LINUXINCLUDE    := \
 
 KBUILD_CPPFLAGS := -D__KERNEL__
 
-ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
-KBUILD_CFLAGS	:= $(call cc-option,-Oz,-Os)
-else
-ifdef CONFIG_PROFILE_ALL_BRANCHES
-KBUILD_CFLAGS	:= -O2
-else
-KBUILD_CFLAGS   := -O2
-endif
-endif
-
-KBUILD_CFLAGS   += -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
+KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -fno-strict-aliasing -fno-common \
 		   -Werror-implicit-function-declaration \
 		   -Wno-format-security \
 		   -std=gnu89 $(call cc-option,-fno-PIE) \
-		   -DNDEBUG \
-		   -pipe
-
-# Target specific Flags
-CFLAGS_ABI	:= -march=armv8-a \
+		   -DNDEBUG -pipe \
+		   -march=armv8-a \
 		   -mcpu=exynos-m1 \
 		   -mtune=exynos-m1 \
 		   -mgeneral-regs-only
 
-KBUILD_CFLAGS   += $(CFLAGS_ABI)
-
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
-KBUILD_AFLAGS   := -D__ASSEMBLY__ $(call cc-option,-fno-PIE) $(CFLAGS_ABI)
+KBUILD_AFLAGS   := -D__ASSEMBLY__ $(call cc-option,-fno-PIE)
 KBUILD_AFLAGS_MODULE  := -DMODULE
 KBUILD_CFLAGS_MODULE  := -DMODULE
 KBUILD_LDFLAGS_MODULE := -T $(srctree)/scripts/module-common.lds
@@ -693,6 +681,16 @@ KBUILD_CFLAGS	+= $(call cc-disable-warning, stringop-truncation)
 KBUILD_CFLAGS	+= $(call cc-disable-warning, sizeof-pointer-div)
 KBUILD_CFLAGS	+= $(call cc-disable-warning, stringop-overflow)
 
+ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
+KBUILD_CFLAGS	+= $(call cc-option,-Oz,-Os)
+else
+ifdef CONFIG_PROFILE_ALL_BRANCHES
+KBUILD_CFLAGS	+= -O3
+else
+KBUILD_CFLAGS   += -O3
+endif
+endif
+
 # Tell gcc to never replace conditional load with a non-conditional one
 KBUILD_CFLAGS	+= $(call cc-option,--param=allow-store-data-races=0)
 
@@ -795,7 +793,6 @@ KBUILD_CFLAGS += $(call cc-disable-warning, unused-but-set-variable)
 KBUILD_CFLAGS += $(call cc-disable-warning, unused-const-variable)
 KBUILD_CFLAGS += $(call cc-disable-warning, unused-variable)
 KBUILD_CFLAGS += $(call cc-disable-warning, unused-label)
-KBUILD_CFLAGS += $(call cc-disable-warning, unused-function)
 KBUILD_CFLAGS += $(call cc-disable-warning, unused-value)
 endif
 
@@ -881,9 +878,6 @@ KBUILD_CFLAGS   += $(call cc-option,-Werror=date-time)
 
 # enforce correct pointer usage
 KBUILD_CFLAGS   += $(call cc-option,-Werror=incompatible-pointer-types)
-
-# Require designated initializers for all marked structures
-KBUILD_CFLAGS   += $(call cc-option,-Werror=designated-init)
 
 # use the deterministic mode of AR if available
 KBUILD_ARFLAGS := $(call ar-option,D)
@@ -1129,7 +1123,7 @@ endef
 
 define filechk_version.h
 	(echo \#define LINUX_VERSION_CODE $(shell                         \
-	expr $(VERSION) \* 65536 + 0$(PATCHLEVEL) \* 256 + 255); \
+	expr $(VERSION) \* 65536 + 0$(PATCHLEVEL) \* 256 + 255);          \
 	echo '#define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))';)
 endef
 
